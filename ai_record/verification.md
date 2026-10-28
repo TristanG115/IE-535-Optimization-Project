@@ -12,6 +12,7 @@ Runtime: `C:\Users\Tristan\.cache\codex-runtimes\codex-primary-runtime\dependenc
 - `& $py ai_record/records.py codex <actual rollout path> --topic 'Documentation setup'`: saved a real 501383-byte source snapshot and its derived transcript; CSV records the full SHA-256 and source location.
 - `& $py ai_record/records.py bundle --pdf`: compiled one snapshot to a three-page PDF. `pypdf` extracted the original request (including `Before we start coding`) and the decision log (`D002`). Source transcript and PDF text contained zero U+FFFD replacement characters.
 - Poppler `pdftoppm -scale-to 1200 -png ai_record/compiled/ai_record.pdf tmp/pdfs/ai-record`: rendered all three pages. All three were opened and inspected for wrapping, margins and legibility; no clipping or overlaps observed. Generated PDF and temporary renders are ignored by Git.
+- Git's Windows newline conversion was disabled for raw exports, reading copies and attachments in `.gitattributes`. The raw source read back from the committed Git blob had the same SHA-256 recorded in the CSV; `git check-attr text` reported `unset` for that export.
 
 ## Limits
 
