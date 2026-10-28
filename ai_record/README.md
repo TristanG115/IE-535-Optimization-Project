@@ -2,7 +2,7 @@
 
 Start here before the next project conversation. Keep **all project prompts**, follow-ups, instructions supplied to agents, and corresponding responses or available session exports. Keep code blocks intact. Log important suggestions in `decisions.md` with reasons and actual verification. Missing history must be marked missing, never reconstructed.
 
-The supplied assignment, pages 1-2, requires a searchable AI-record PDF organized by tool and conversation. It also makes the student responsible for all mathematical claims. These are reference requirements; they do not authorize solver implementation. The assignment asks for one track; confirm the intended scope before developing both.
+The supplied assignment, pages 1-2, requires a searchable AI-record PDF organized by tool and conversation. It also makes the student responsible for all mathematical claims. These are reference requirements; they do not authorize solver implementation. The written assignment asks for one track and says there is no extra credit. The user reports that the professor later confirmed in class that completing both options earns extra credit, and has chosen both. Treat that as user-reported instructor guidance. On 2026-10-27 the user authorized Phase 1 failing tests, shared interfaces and minimal stubs. Solver implementation and commits remain withheld pending user review.
 
 ## Files
 
@@ -46,7 +46,7 @@ PDF rendering currently uses Windows Consolas (`C:\Windows\Fonts\consola.ttf`). 
 
 Re-running this command replaces that session's export and transcript with the full saved conversation. Old hash-named snapshots and duplicate tracker rows are consolidated automatically, after checking their original hashes and verifying that the new Codex source extends every earlier source. A shorter or divergent Codex export is rejected; it cannot erase earlier messages. Do not concatenate overlapping transcripts.
 
-To include the final reply itself, the agent starts this command in a **hidden background process before sending the final reply**, after committing verified implementation changes:
+When a stage is ready to commit, the agent can include its final reply by starting this command in a **hidden background process before sending the final reply**, after committing verified implementation changes. If the user asks to review before committing, present the generated export and PDF first and do not start an auto-commit watcher:
 
 ```powershell
 & $py ai_record/records.py codex "C:\full\path\to\rollout-session.jsonl" --topic "Session closeout" --wait-final --commit
@@ -56,7 +56,7 @@ To include the final reply itself, the agent starts this command in a **hidden b
 
 A normal export during active work remains a snapshot. Its cutoff is recorded automatically. Native exports are never reconstructed, and an incomplete JSON line causes a clear error instead of registration.
 
-The original JSONL is the evidence. The Markdown copy preserves prompts and responses verbatim, in source order, and includes **available reasoning summaries only**. It excludes duplicated event mirrors, system/developer context, tool calls/results and encrypted data from the reading copy. Those remain in the raw original. Non-text content is marked; keep actual input files separately. The script supports observed message records and event-only logs. If formats change, review the raw source and adapt tests before trusting a new export. A supported mixed log uses response-item messages as the authoritative conversation stream.
+The original JSONL is the evidence. The Markdown copy keeps every substantive saved user prompt and assistant response in source order with UTC timestamps and raw line numbers. Known runtime-only user records (environment context and open-page metadata) and IDE preambles are excluded from the reading copy. Brief research-source and test-result notes appear beside the relevant exchange only when the source tool output contains them. Available reasoning summaries are copied exactly; hidden reasoning is never reconstructed. System/developer context, routine tool calls/results and encrypted data stay in the raw original. Those remain in the raw original. Non-text content is marked; keep actual input files separately. The script supports observed message records and event-only logs. If formats change, review the raw source and adapt tests before trusting a new export. A supported mixed log uses response-item messages as the authoritative conversation stream.
 
 This local file format and path were verified on this computer, not promised as a permanent public export API. `history.jsonl` alone is not the evidence source used here. [Official OpenAI configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference) describes history and reasoning-display settings; it does not guarantee a complete conversation export or recovery of hidden reasoning. Do not change global Codex settings for this workflow.
 
@@ -75,10 +75,10 @@ Use the real conversation ID if available; otherwise a unique dated label. Leave
 
 ## After every meaningful session
 
-1. Refresh the actual conversation and confirm its single row and stable session filename. Start the final-reply watcher before ending the turn.
+1. Refresh the actual conversation when authorized and confirm its single row and stable session filename. Start the final-reply watcher before ending the turn only when an auto-commit closeout is appropriate. If review before commit was requested, show the current snapshot and PDF first.
 2. Review the first/last messages, all prompts, follow-ups and attachments against the source. Edit `completeness` to `reviewed complete through <last message/time>` only when justified; otherwise retain snapshot/gap status. Store source/capture limitations in `notes`.
 3. Add only meaningful suggestions to `decisions.md`. State the actual decision maker, why, what changed, and how it was verified. Pending review stays pending. For mathematics, retain independent checks; tests alone do not establish a theorem.
-4. Commit the verified development stage with its records. Never push without authorization.
+4. Commit the verified development stage with its records when the user has not requested a pre-commit review. If they have, wait for their decision. Never push without authorization.
 
 ## Searchable PDF, now or later
 
@@ -87,6 +87,6 @@ Use the real conversation ID if available; otherwise a unique dated label. Leave
 & $py -m unittest discover -s ai_record -p "test_*.py" -v
 ```
 
-Open `ai_record/compiled/ai_record.pdf` and search for a known prompt. The PDF includes the CSV index, decision log and one current reading copy per tool/session, ordered by tool and session. It checks raw hashes and regenerates Codex text to reject altered derivatives. Manual external-tool reading copies still require human source comparison. Generated files are text, not screenshots; raw tool details and attachments remain separate evidence. Recompile after the final-reply capture when a current PDF is needed; the finalizer updates source records only.
+Open `ai_record/compiled/ai_record.pdf` and search for a known prompt. The PDF leads with a short S001-style session index and the readable prompt/response exchanges; the decision log follows as an appendix. It omits the raw CSV dump and runtime context. The build verifies raw hashes and refreshes Codex reading copies from those unchanged originals. Manual external-tool reading copies still require human source comparison. Generated files are text, not screenshots; raw tool details and attachments remain separate evidence. Recompile after the final-reply capture when a current PDF is needed; the finalizer updates source records only.
 
 Before submitting, re-export ended conversations, inspect every CSV row for missing content, check the PDF's first/last messages and special symbols, and compile again. A successful PDF build does not prove all project conversations were captured.

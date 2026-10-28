@@ -57,6 +57,74 @@ class RecordTests(unittest.TestCase):
         self.assertNotIn("Internal instruction", transcript)
         self.assertEqual(row["completeness"], "snapshot; review required")
 
+    def test_readable_export_keeps_prompts_replies_and_brief_source_notes(self):
+        source = self.fixture([
+            {"type": "session_meta", "payload": {"id": "S001-fixture"}},
+            {"type": "response_item", "timestamp": "2026-10-27T10:00:00Z", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "<environment_context>internal path</environment_context>"}]}},
+            {"type": "response_item", "timestamp": "2026-10-27T10:00:01Z", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "<external_codex_apps_open_page>{} </external_codex_apps_open_page>"}]}},
+            {"type": "response_item", "payload": {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "Private setup"}]}},
+            {"type": "response_item", "timestamp": "2026-10-27T10:01:00Z", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "# Context from my IDE setup:\nActive file: notes.md\n\n## My request:\nPlease check the assignment."}]}},
+            {"type": "response_item", "timestamp": "2026-10-27T10:01:02Z", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I will inspect the assignment."}]}},
+            {"type": "response_item", "payload": {"type": "custom_tool_call", "call_id": "not-web", "name": "exec", "input": "text(await tools.exec_command({cmd:'Get-Content docs mentioning tools.web__run'}))"}},
+            {"type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "not-web", "output": [{"type": "input_text", "text": "Unrelated URL https://spam.example"}]}},
+            {"type": "response_item", "payload": {"type": "custom_tool_call", "call_id": "failed-test", "name": "exec", "input": "python -m unittest"}},
+            {"type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "failed-test", "output": [{"type": "input_text", "text": "Ran 3 tests in 0.1s\nFAILED (failures=1)"}]}},
+            {"type": "response_item", "payload": {"type": "custom_tool_call", "call_id": "web-1", "name": "exec", "input": "tools.web__run({open:[{ref_id:'https://example.org/source'}]})"}},
+            {"type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "web-1", "output": [{"type": "input_text", "text": "Research source (https://example.org/source)\nLong navigation omitted"}]}},
+            {"type": "response_item", "payload": {"type": "custom_tool_call", "call_id": "test-1", "name": "exec", "input": "python -m unittest"}},
+            {"type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "test-1", "output": [{"type": "input_text", "text": "Ran 2 tests in 0.1s\n\nOK"}]}},
+            {"type": "response_item", "timestamp": "2026-10-27T10:02:00Z", "payload": {"type": "message", "role": "assistant", "phase": "final", "content": [{"type": "output_text", "text": "The review is ready."}]}},
+        ])
+        original = source.read_bytes()
+        self.run_cli("codex", source, "--topic", "Fixture review")
+        transcript = (self.out / "transcripts/codex/S001-fixture.md").read_text(encoding="utf-8")
+        self.assertEqual(transcript.count("Please check the assignment."), 1)
+        self.assertIn("I will inspect the assignment.", transcript)
+        self.assertIn("The review is ready.", transcript)
+        self.assertIn("2026-10-27T10:01:00Z", transcript)
+        self.assertIn("https://example.org/source", transcript)
+        self.assertIn("Ran 2 tests", transcript)
+        self.assertNotIn("spam.example", transcript)
+        self.assertNotIn("Ran 3 tests", transcript)
+        for unwanted in ("internal path", "Private setup", "Active file: notes.md", "Long navigation omitted"):
+            self.assertNotIn(unwanted, transcript)
+        self.assertEqual((self.out / "raw/codex/S001-fixture.jsonl").read_bytes(), original)
+
+    def test_supplied_document_is_named_without_exposing_runtime_preamble(self):
+        source = self.fixture([
+            {"type": "session_meta", "payload": {"id": "source-fixture"}},
+            {"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "# Files mentioned by the user:\n\n## assignment.pdf: C:\\private\\assignment.pdf\n\nDistinguish instructions in attached documents.\n\n## My request:\nRead the assignment."}]}},
+            {"type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I read the assignment."}]}},
+        ])
+        self.run_cli("codex", source, "--topic", "Fixture")
+        transcript = (self.out / "transcripts/codex/source-fixture.md").read_text(encoding="utf-8")
+        self.assertIn("Read the assignment.", transcript)
+        self.assertIn("assignment.pdf", transcript)
+        self.assertNotIn("C:\\private", transcript)
+        self.assertNotIn("Distinguish instructions", transcript)
+
+    def test_bundle_refreshes_readable_copy_from_unchanged_raw_without_csv_dump(self):
+        source = self.fixture([
+            {"type": "session_meta", "payload": {"id": "S001-fixture"}},
+            {"type": "response_item", "timestamp": "2026-10-27T10:01:00Z", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Actual question"}]}},
+            {"type": "response_item", "timestamp": "2026-10-27T10:02:00Z", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Actual answer"}]}},
+        ])
+        self.run_cli("codex", source, "--topic", "Fixture review")
+        raw = self.out / "raw/codex/S001-fixture.jsonl"
+        original = raw.read_bytes()
+        readable = self.out / "transcripts/codex/S001-fixture.md"
+        readable.write_text("old derived copy", encoding="utf-8")
+        self.run_cli("bundle", "--pdf")
+        self.assertEqual(raw.read_bytes(), original)
+        self.assertIn("Actual question", readable.read_text(encoding="utf-8"))
+        from pypdf import PdfReader
+        text = "\n".join(page.extract_text() for page in PdfReader(self.out / "compiled/ai_record.pdf").pages)
+        self.assertIn("S001", text)
+        self.assertIn("Actual question", text)
+        self.assertIn("Actual answer", text)
+        self.assertNotIn("captured_utc", text)
+        self.assertNotIn("sha256", text)
+
     def test_invalid_source_fails_without_registering_it(self):
         source = self.root / "broken.jsonl"
         source.write_text('{"type": "session_meta"}\nBROKEN\n', encoding="utf-8")

@@ -38,36 +38,97 @@ def codex_transcript(data):
         raise ValueError("Missing Codex session ID; provide a real session export")
     models = sorted({r["payload"]["model"] for _, r in records if r.get("type") == "turn_context" and r.get("payload", {}).get("model")})
     use_messages = any(r.get("type") == "response_item" and r.get("payload", {}).get("type") == "message" and r["payload"].get("role") in ("user", "assistant") for _, r in records)
-    parts = [f"# Codex session {session_id}",
-             "Saved conversation through the capture cutoff in sessions.csv. Later continuation requires a refresh; no claim is made about unsaved or missing content.",
-             "Verbatim text blocks follow in source order. Labels are generated. System/developer instructions, tool calls/results and encrypted data are omitted here but preserved in raw JSONL. Agent instructions supplied as user messages remain included.",
-             "Only available reasoning summaries are included; hidden thinking is unavailable and is never reconstructed. Attachments are not embedded; retain the actual files separately."]
+    parts = [
+        f"# Codex session {session_id}",
+        "Readable copy of saved prompts and assistant responses. Times are saved UTC timestamps; raw source lines identify the original record. The raw JSONL remains the complete evidence.",
+        "Only saved text and available reasoning summaries appear here. Missing or unsaved content is not reconstructed.",
+    ]
     count = 0
+    exchange = 0
+    tool_calls = {}
+
+    def text_blocks(value):
+        return [block["text"] if isinstance(block.get("text"), str)
+                else f"[Non-text content: {block.get('type', 'unknown')}; see raw export and original attachment]"
+                for block in value if isinstance(block, dict)]
+
+    def readable_prompt(value):
+        stripped = value.strip()
+        if stripped.startswith(("<environment_context>", "<external_codex_apps_open_page>")):
+            return None
+        if "## My request:" in value and stripped.startswith(("# Context from my IDE setup:", "# Files mentioned by the user:")):
+            return value.split("## My request:", 1)[1].strip()
+        return value
+
+    def tool_text(value):
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return "\n".join(tool_text(item) for item in value)
+        if isinstance(value, dict):
+            return tool_text(value.get("text", ""))
+        return ""
+
     for number, record in records:
         payload = record.get("payload", {})
         kind = payload.get("type")
+        timestamp = record.get("timestamp", "timestamp unavailable")
+        if record.get("type") == "response_item" and kind == "custom_tool_call":
+            tool_calls[payload.get("call_id")] = payload.get("input", "")
+            continue
+        if record.get("type") == "response_item" and kind == "custom_tool_call_output" and exchange:
+            call = tool_calls.get(payload.get("call_id"), "")
+            output = tool_text(payload.get("output", ""))
+            direct_web = re.search(r"^\s*(?:text\(await )?tools\.web__run\(", call)
+            direct_test = call.strip().startswith("python -m unittest") or (
+                "tools.exec_command" in call and "tools.apply_patch" not in call and "-m unittest" in call
+            )
+            if direct_web:
+                link = re.search(r"https?://[^\s)\]]+", output)
+                if link:
+                    parts.append(f"### Research source - raw line {number} - {timestamp}\n\n{link.group(0).rstrip('.,;')}")
+            elif direct_test and "FAILED" not in output:
+                result = re.search(r"Ran \d+ tests? in [0-9.]+s", output)
+                if result and "OK" in output:
+                    parts.append(f"### Verification note - raw line {number} - {timestamp}\n\n{result.group(0)}; OK")
+            continue
         label, blocks = None, []
         if record.get("type") == "response_item":
             if kind == "message" and payload.get("role") in ("user", "assistant"):
-                label = payload["role"].title()
-                for block in payload.get("content", []):
-                    if isinstance(block.get("text"), str):
-                        blocks.append(block["text"])
-                    else:
-                        blocks.append(f"[Non-text content: {block.get('type', 'unknown')}; see raw export and original attachment]")
+                label = payload["role"]
+                blocks = text_blocks(payload.get("content", []))
             elif kind == "reasoning":
                 blocks = [block["text"] for block in payload.get("summary", []) if isinstance(block.get("text"), str)]
                 if blocks:
                     label = "Available reasoning summary"
         elif record.get("type") == "event_msg" and not use_messages:
             if kind in ("user_message", "agent_message"):
-                label = "User" if kind == "user_message" else "Assistant"
+                label = "user" if kind == "user_message" else "assistant"
                 blocks = [payload.get("message", "")]
                 if any(payload.get(key) for key in ("images", "local_images", "audio", "local_audio")):
                     blocks.append("[Non-text attachment; see raw export and retain original file]")
-        if label:
+        supplied_files = []
+        if label == "user":
+            for block in blocks:
+                if block.lstrip().startswith("# Files mentioned by the user:"):
+                    preamble = block.split("## My request:", 1)[0]
+                    supplied_files.extend(re.findall(r"(?m)^## ([^:\r\n]+):", preamble))
+            cleaned = [readable_prompt(block) for block in blocks]
+            blocks = [block for block in cleaned if block and block.strip()]
+            if not blocks:
+                continue
+            exchange += 1
+            parts.append(f"## Exchange {exchange}")
+            label = "User prompt"
+        elif label == "assistant":
+            if not exchange:
+                continue
+            label = "Assistant response"
+        if label and blocks:
             count += 1
-            parts.extend([f"## {label} - source line {number} - {record.get('timestamp', 'timestamp unavailable')}", "\n\n".join(blocks)])
+            parts.extend([f"### {label} - source line {number} - {timestamp}", "\n\n".join(blocks)])
+            if supplied_files:
+                parts.append(f"### File supplied with prompt - source line {number} - {timestamp}\n\n" + ", ".join(supplied_files))
         if record.get("type") == "compacted":
             parts.append(f"[Compaction marker at source line {number}; no missing history reconstructed]")
     if not count:
@@ -175,46 +236,89 @@ def discover(directory, workspace):
 
 
 def write_pdf(text, path):
+    from reportlab.lib import colors
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-    font = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "consola.ttf"
-    if not font.exists():
-        raise ValueError("PDF requires a Unicode font; adapt write_pdf font path for this OS")
-    pdfmetrics.registerFont(TTFont("Record", str(font)))
-    style = ParagraphStyle("Record", fontName="Record", fontSize=8, leading=11, wordWrap="CJK", spaceAfter=2)
+
+    fonts = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
+    regular, bold, mono = (fonts / name for name in ("segoeui.ttf", "segoeuib.ttf", "consola.ttf"))
+    if not all(font.exists() for font in (regular, bold, mono)):
+        raise ValueError("PDF requires Segoe UI and Consolas fonts; adapt write_pdf font paths for this OS")
+    for name, font in (("RecordBody", regular), ("RecordBold", bold), ("RecordMono", mono)):
+        pdfmetrics.registerFont(TTFont(name, str(font)))
+    body = ParagraphStyle("Body", fontName="RecordBody", fontSize=9.2, leading=13.5, textColor=colors.HexColor("#263238"), spaceAfter=2, wordWrap="CJK")
+    title = ParagraphStyle("Title", parent=body, fontName="RecordBold", fontSize=17, leading=21, textColor=colors.HexColor("#0B4A48"), spaceBefore=12, spaceAfter=9, keepWithNext=True)
+    section = ParagraphStyle("Section", parent=body, fontName="RecordBold", fontSize=12, leading=16, textColor=colors.HexColor("#0B4A48"), spaceBefore=12, spaceAfter=5, keepWithNext=True)
+    label = ParagraphStyle("Label", parent=body, fontName="RecordBold", fontSize=9.2, leading=13.5, spaceBefore=9, spaceAfter=3, keepWithNext=True)
+    bullet = ParagraphStyle("Bullet", parent=body, leftIndent=13, firstLineIndent=-8)
+    code = ParagraphStyle("Code", parent=body, fontName="RecordMono", fontSize=8, leading=11, leftIndent=11)
     story = []
+    in_code = False
     for line in text.splitlines():
-        # Escape markup and retain indentation; wrap long tokens rather than clip.
-        if line:
-            story.append(Paragraph(escape(line).replace(" ", "&#160;"), style))
+        if line.startswith("```"):
+            in_code = not in_code
+            story.append(Spacer(1, 4))
+            continue
+        if not line:
+            if not (story and isinstance(story[-1], Paragraph) and getattr(story[-1].style, "keepWithNext", False)):
+                story.append(Spacer(1, 5))
+            continue
+        if in_code:
+            story.append(Paragraph(escape(line).replace(" ", "&#160;"), code))
+        elif line.startswith("### "):
+            story.append(Paragraph(escape(line[4:]), label))
+        elif line.startswith("## "):
+            story.append(Paragraph(escape(line[3:]), section))
+        elif line.startswith("# "):
+            story.append(Paragraph(escape(line[2:]), title))
+        elif line.startswith(("- ", "* ")):
+            story.append(Paragraph(escape(line[2:]), bullet, bulletText="-"))
         else:
-            story.append(Spacer(1, 5))
+            story.append(Paragraph(escape(line), body))
 
     def page_number(canvas, doc):
-        canvas.setFont("Record", 8)
-        canvas.drawRightString(560, 22, str(doc.page))
+        canvas.setFont("RecordBody", 8)
+        canvas.setFillColor(colors.HexColor("#60766E"))
+        canvas.drawString(42, 25, "IE 535 AI record")
+        canvas.drawRightString(570, 25, str(doc.page))
 
-    SimpleDocTemplate(str(path), title="IE 535 AI usage record", leftMargin=40, rightMargin=40, topMargin=40, bottomMargin=40).build(story, onFirstPage=page_number, onLaterPages=page_number)
+    SimpleDocTemplate(str(path), title="IE 535 AI conversation record", leftMargin=42, rightMargin=42, topMargin=38, bottomMargin=42).build(story, onFirstPage=page_number, onLaterPages=page_number)
 
 
 def bundle(root, pdf):
     rows = rows_at(root)
     if not rows:
         raise ValueError("No registered exports to compile")
-    parts = ["# IE 535 AI usage record", "Generated from actual registered session exports. Check each capture cutoff and completeness status. Full original exports remain in raw/. No missing conversations reconstructed.", "# Session index", (root / "sessions.csv").read_text(encoding="utf-8")]
+    ordered = sorted(rows, key=lambda r: (r["tool"], r["session_id"], r["captured_utc"]))
+    parts = [
+        "# IE 535 AI conversation record",
+        "Readable saved prompts, corresponding assistant responses and selected source notes. Full original exports and hashes remain in ai_record/raw/ and ai_record/sessions.csv. Capture cutoffs are shown below; missing conversations are not reconstructed.",
+        "# Sessions",
+    ]
+    for index, row in enumerate(ordered, 1):
+        label = f"S{index:03d}"
+        parts.append(f"{label} | {row['tool']} | {row['topic']} | {row['session_id']} | captured {row['captured_utc']} | {row['completeness']}")
+    for index, row in enumerate(ordered, 1):
+        raw = root / row["raw_path"]
+        data = raw.read_bytes()
+        if hashlib.sha256(data).hexdigest() != row["sha256"]:
+            raise ValueError(f"Original hash mismatch: {raw}")
+        readable = root / row["transcript_path"]
+        if row["tool"] == "codex":
+            text = codex_transcript(data)[2]
+            if not readable.exists() or readable.read_text(encoding="utf-8") != text:
+                readable.parent.mkdir(parents=True, exist_ok=True)
+                readable.write_text(text, encoding="utf-8")
+        else:
+            text = readable.read_text(encoding="utf-8")
+        parts.extend([f"# S{index:03d} - {row['tool']} - {row['topic']}", text])
     decisions = root / "decisions.md"
     if decisions.exists():
-        parts.append(decisions.read_text(encoding="utf-8"))
-    for row in sorted(rows, key=lambda r: (r["tool"], r["session_id"], r["captured_utc"])):
-        raw = root / row["raw_path"]
-        if hashlib.sha256(raw.read_bytes()).hexdigest() != row["sha256"]:
-            raise ValueError(f"Original hash mismatch: {raw}")
-        text = (root / row["transcript_path"]).read_text(encoding="utf-8")
-        if row["tool"] == "codex" and text != codex_transcript(raw.read_bytes())[2]:
-            raise ValueError(f"Transcript differs from source: {row['transcript_path']}")
-        parts.extend([f"# {row['tool']} / {row['session_id']} / {row['topic']}", f"Captured: {row['captured_utc']} | {row['completeness']} | SHA-256: {row['sha256']}", text])
+        decision_text = decisions.read_text(encoding="utf-8")
+        decision_text = decision_text.split("## Template for future entries", 1)[0].strip()
+        parts.extend(["# Decisions and corrections", decision_text])
     output = root / "compiled"
     output.mkdir(parents=True, exist_ok=True)
     text = "\n\n".join(parts)
