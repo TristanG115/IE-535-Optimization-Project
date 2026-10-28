@@ -1,0 +1,2 @@
+captured_utc,tool,model,session_id,topic,raw_path,transcript_path,sha256,completeness,notes
+2026-10-28T00:49:21.208836+00:00,codex,gpt-6.1-sol,01a17ff8-0eac-7342-a76a-d9bf68abcde3,Documentation setup,raw/codex/01a17ff8-0eac-7342-a76a-d9bf68abcde3-b837e83b45de53c7.jsonl,transcripts/codex/01a17ff8-0eac-7342-a76a-d9bf68abcde3-b837e83b45de53c7.md,b837e83b45de53c7e8575251287ae306d9092ad0913e5dcd1180e90a233f4736,snapshot; review required,Source: C:\Users\Tristan\.codex\sessions\2026\10\27\rollout-2026-10-27T20-45-25-01a17ff8-0eac-7342-a76a-d9bf68abcde3.jsonl
