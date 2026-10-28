@@ -20,6 +20,25 @@ Record only consequential suggestions actually discussed. `proposed` is not user
 - Why: implementing both increases work beyond the stated assignment requirement.
 - Verification: checked against pages 1-4 of the supplied assignment; this is a scope observation, not a mathematical result.
 
+## D003 - Require documentation closeout for every session
+
+- Date: 2026-10-27
+- Session: Codex `01a17ff8-0eac-7342-a76a-d9bf68abcde3`; follow-up user request to make closeout mandatory.
+- Decision: the user explicitly requested end-of-session conversation preservation, tracker updates, meaningful decision records, pending approval labels, a short summary and a local commit. Add `CLAUDE.md` pointing to the shared `AGENTS.md` rules.
+- Status: accepted by explicit user instruction; implemented in AGENTS.md and CLAUDE.md.
+- Why: apply the same documentation discipline in future Codex and Claude work without duplicated rule sets.
+- Export limitation: a live capture cannot include a final reply that has not yet been saved. Record the actual cutoff, preserve everything available, and refresh the saved ending at the next opportunity; never reconstruct it.
+- Verification: all four documentation tests passed during this closeout; `git diff --check` reported no whitespace errors. Read AGENTS.md and CLAUDE.md to confirm the shared rules and explicit snapshot limitation. The tracker records the new export's actual cutoff.
+
+## D004 - Extra-credit expectation conflicts with assignment
+
+- Date: 2026-10-27
+- Session: same Codex follow-up, including the user's existing AGENTS.md edit stating a preference for both solvers to obtain extra credit.
+- Recommendation: preserve that preference, but do not assume it earns extra credit. The supplied assignment's first page explicitly says there is no extra credit.
+- Status: pending user clarification of expanded scope or instructor confirmation; no solver development started and no approval invented.
+- Why: implementing both methods adds work without a documented extra-credit benefit.
+- Verification: rechecked the actual assignment text during this closeout; no mathematical calculation is involved.
+
 ## Template for future entries (not an actual decision)
 
 - ID / date / tool / session ID / transcript source line:

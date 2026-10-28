@@ -1,4 +1,4 @@
 # Preserve evidence and generated reading copies byte-for-byte across checkouts.
-ai_record/raw/** -text
-ai_record/transcripts/** -text
+ai_record/raw/** -text -whitespace
+ai_record/transcripts/** -text -whitespace
 ai_record/attachments/** -text

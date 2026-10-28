@@ -21,3 +21,12 @@ Runtime: `C:\Users\Tristan\.cache\codex-runtimes\codex-primary-runtime\dependenc
 - No actual ChatGPT or Claude project exports were supplied. Their folders are ready; the external-import workflow was tested using temporary synthetic text only. Non-text native exports require a human-checked full text reading copy.
 - Raw exports retain saved tool details and internal context; the concise reading copy intentionally excludes these. Original attached files should be kept separately; the provided assignment is retained in attachments/.
 - No mathematical calculation was performed or certified. The assignment was read as reference material only; no solver track, architecture, tolerance or numerical rule was selected.
+
+## Follow-up closeout rule (2026-10-27)
+
+- Added the user's required closeout workflow to AGENTS.md and a CLAUDE.md pointer to those shared rules. Preserved the user's existing scope edit and flagged its extra-credit conflict separately.
+- Ran `& $py -m unittest discover -s ai_record -p 'test_*.py' -v`: all four tests passed with no warnings. Ran `git diff --check`: no whitespace errors.
+- Re-extracted page 1 of the retained assignment using pypdf and confirmed the exact sentence `There is no extra credit.` Expanded scope remains pending clarification; no solver was implemented.
+- The follow-up snapshot's exact source cutoff and final-reply limitation are recorded in sessions.csv. Source hashes and required prompt/prior-reply presence are checked at capture time. This does not certify content that has not yet been saved.
+- Capture verification confirmed the original request, prior final reply and current closeout request were present, and the raw SHA-256 matched the tracker. Markdown compilation succeeded for both registered snapshots.
+- The staged whitespace check flagged preserved CRLF in the new verbatim transcript. Raw exports and reading copies are exempted from whitespace linting in .gitattributes; their bytes remain unchanged. Authored files retain whitespace checks.
