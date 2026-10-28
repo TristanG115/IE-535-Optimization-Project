@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 
 SCRIPT = Path(__file__).with_name("records.py")
@@ -60,6 +62,62 @@ class RecordTests(unittest.TestCase):
         source.write_text('{"type": "session_meta"}\nBROKEN\n', encoding="utf-8")
         result = self.run_cli("codex", source, "--topic", "fixture", success=False)
         self.assertIn("Invalid JSON at source line 2", result.stderr)
+        self.assertFalse((self.out / "sessions.csv").exists())
+
+    def test_continuation_replaces_session_and_rejects_shorter_history(self):
+        source = self.fixture([
+            {"type": "session_meta", "payload": {"id": "continued"}},
+            {"type": "event_msg", "payload": {"type": "user_message", "message": "First prompt"}},
+        ])
+        earlier = source.read_bytes()
+        self.run_cli("codex", source, "--topic", "First")
+        with source.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"type": "event_msg", "payload": {"type": "agent_message", "message": "Later answer"}}) + "\n")
+        self.run_cli("codex", source, "--topic", "Continued")
+        with (self.out / "sessions.csv").open(encoding="utf-8") as stream:
+            rows = list(csv.DictReader(stream))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["transcript_path"], "transcripts/codex/continued.md")
+        self.assertEqual(len(list((self.out / "transcripts/codex").glob("*.md"))), 1)
+        transcript = (self.out / rows[0]["transcript_path"]).read_text(encoding="utf-8")
+        self.assertIn("First prompt", transcript)
+        self.assertIn("Later answer", transcript)
+        saved = (self.out / rows[0]["raw_path"]).read_bytes()
+        source.write_bytes(earlier)
+        self.run_cli("codex", source, "--topic", "Older", success=False)
+        self.assertEqual((self.out / rows[0]["raw_path"]).read_bytes(), saved)
+
+    def test_wait_final_captures_actual_saved_reply(self):
+        subprocess.run(["git", "init", "-q", str(self.root)], check=True)
+        for key, value in (("user.name", "Fixture"), ("user.email", "fixture@example.invalid")):
+            subprocess.run(["git", "-C", str(self.root), "config", key, value], check=True)
+        source = self.fixture([
+            {"type": "session_meta", "payload": {"id": "final-fixture"}},
+            {"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Prompt"}]}},
+        ])
+        def save_reply():
+            time.sleep(0.3)
+            with source.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps({"type": "response_item", "payload": {"type": "message", "role": "assistant", "phase": "final", "content": [{"type": "output_text", "text": "Saved final answer"}]}}) + "\n")
+        writer = threading.Thread(target=save_reply)
+        writer.start()
+        self.addCleanup(writer.join)
+        self.run_cli("codex", source, "--topic", "Closeout", "--wait-final", "--timeout", "3", "--commit")
+        text = (self.out / "transcripts/codex/final-fixture.md").read_text(encoding="utf-8")
+        self.assertIn("Saved final answer", text)
+        with (self.out / "sessions.csv").open(encoding="utf-8") as stream:
+            row = next(csv.DictReader(stream))
+        self.assertIn("saved final reply", row["completeness"])
+        committed = subprocess.check_output(["git", "-C", str(self.root), "show", "HEAD:records/transcripts/codex/final-fixture.md"], text=True, encoding="utf-8")
+        self.assertIn("Saved final answer", committed)
+
+    def test_wait_final_timeout_does_not_invent_or_register_a_reply(self):
+        source = self.fixture([
+            {"type": "session_meta", "payload": {"id": "unfinished"}},
+            {"type": "event_msg", "payload": {"type": "user_message", "message": "Prompt"}},
+        ])
+        result = self.run_cli("codex", source, "--topic", "Unfinished", "--wait-final", "--timeout", "0.1", success=False)
+        self.assertIn("Timed out", result.stderr)
         self.assertFalse((self.out / "sessions.csv").exists())
 
     def test_missing_attachment_is_marked_and_event_only_export_supported(self):

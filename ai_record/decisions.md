@@ -38,6 +38,16 @@ Record only consequential suggestions actually discussed. `proposed` is not user
 - Status: pending user clarification of expanded scope or instructor confirmation; no solver development started and no approval invented.
 - Why: implementing both methods adds work without a documented extra-credit benefit.
 - Verification: rechecked the actual assignment text during this closeout; no mathematical calculation is involved.
+- Later user clarification in AGENTS.md: the professor verbally offered extra credit for both methods. This is a user-reported clarification, not independently verified instructor evidence. Preserve the preference for both; do not present the earlier written-policy concern as a newly unanswered question.
+
+## D005 - One current transcript per continued session, including its saved final reply
+
+- Date: 2026-10-27
+- Session: Codex `01a17ff8-0eac-7342-a76a-d9bf68abcde3`; user follow-up about the two overlapping transcript files.
+- Decision: explicitly requested by the user. Replace the previous session transcript/export and tracker row with the entire actual saved conversation as it continues; retain earlier revisions in Git instead of accumulating overlapping current files.
+- Status: accepted by user instruction and implemented. No mathematical or architectural approval is being inferred.
+- Correction: prior closeouts preserved snapshots but omitted replies written after capture. A final-reply watcher now waits for the actual saved assistant final message, exports it and locally commits only that session's records. Starting the watcher is pending capture, not proof of completion.
+- Verification: seven documentation tests passed, including session replacement, refusal to discard older Codex history, timeout without fabricated content, and a real temporary Git commit containing a synthetic saved final reply. Real-session consolidation and the finalizer's actual status are recorded in verification.md and process logs.
 
 ## Template for future entries (not an actual decision)
 

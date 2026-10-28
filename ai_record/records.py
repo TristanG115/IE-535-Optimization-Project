@@ -7,7 +7,9 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
+import time
 from xml.sax.saxutils import escape
 
 FIELDS = "captured_utc tool model session_id topic raw_path transcript_path sha256 completeness notes".split()
@@ -37,7 +39,7 @@ def codex_transcript(data):
     models = sorted({r["payload"]["model"] for _, r in records if r.get("type") == "turn_context" and r.get("payload", {}).get("model")})
     use_messages = any(r.get("type") == "response_item" and r.get("payload", {}).get("type") == "message" and r["payload"].get("role") in ("user", "assistant") for _, r in records)
     parts = [f"# Codex session {session_id}",
-             "Snapshot of saved data, not a claim of a complete conversation. Re-export after the final reply.",
+             "Saved conversation through the capture cutoff in sessions.csv. Later continuation requires a refresh; no claim is made about unsaved or missing content.",
              "Verbatim text blocks follow in source order. Labels are generated. System/developer instructions, tool calls/results and encrypted data are omitted here but preserved in raw JSONL. Agent instructions supplied as user messages remain included.",
              "Only available reasoning summaries are included; hidden thinking is unavailable and is never reconstructed. Attachments are not embedded; retain the actual files separately."]
     count = 0
@@ -84,26 +86,81 @@ def rows_at(root):
         return list(reader)
 
 
-def preserve(root, source, tool, session_id, model, topic, transcript, data):
+def preserve(root, source, tool, session_id, model, topic, transcript, data, saved_final=False):
     digest = hashlib.sha256(data).hexdigest()
     rows = rows_at(root)
-    if any(r["tool"] == tool and r["session_id"] == session_id and r["sha256"] == digest for r in rows):
-        print("Identical snapshot already registered")
-        return
+    previous = [r for r in rows if r["tool"] == tool and r["session_id"] == session_id]
+    obsolete = []
+    for row in previous:
+        for field, directory in (("raw_path", "raw"), ("transcript_path", "transcripts")):
+            path = (root / row[field]).resolve()
+            if not path.is_relative_to((root / directory / tool).resolve()):
+                raise ValueError(f"Evidence path outside expected directory: {path}")
+            obsolete.append(path)
+        old = (root / row["raw_path"]).read_bytes()
+        if hashlib.sha256(old).hexdigest() != row["sha256"]:
+            raise ValueError("Existing source hash mismatch; refusing to replace evidence")
+        if tool == "codex" and not data.startswith(old):
+            raise ValueError("New Codex export does not extend the previous source; refusing to discard history")
     slug = re.sub(r"[^A-Za-z0-9_-]", "_", session_id)[:100]
-    name = f"{slug}-{digest[:16]}"
+    name = slug
     raw = Path("raw") / tool / (name + source.suffix)
     readable = Path("transcripts") / tool / (name + ".md")
     for path in (raw, readable):
         (root / path).parent.mkdir(parents=True, exist_ok=True)
     (root / raw).write_bytes(data)
     (root / readable).write_text(transcript, encoding="utf-8")
-    rows.append(dict(zip(FIELDS, [datetime.now(timezone.utc).isoformat(), tool, model, session_id, topic, raw.as_posix(), readable.as_posix(), digest, "snapshot; review required", "Source: " + str(source.resolve())])))
+    rows = [r for r in rows if not (r["tool"] == tool and r["session_id"] == session_id)]
+    completeness = "captured through saved final reply; refresh if continued" if saved_final else "snapshot; review required"
+    notes = "Source: " + str(source.resolve())
+    if tool == "codex":
+        records = read_codex(data)
+        number, last = records[-1]
+        notes += f"; captured through source line {number}, {last.get('timestamp', 'timestamp unavailable')}"
+        if not saved_final:
+            notes += "; current final reply may not yet be saved; refresh after it is saved"
+    rows.append(dict(zip(FIELDS, [datetime.now(timezone.utc).isoformat(), tool, model, session_id, topic, raw.as_posix(), readable.as_posix(), digest, completeness, notes])))
     with (root / "sessions.csv").open("w", encoding="utf-8", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=FIELDS)
         writer.writeheader()
         writer.writerows(rows)
+    for path in set(obsolete) - {(root / raw).resolve(), (root / readable).resolve()}:
+        path.unlink()
     print(f"Saved {raw} and {readable}")
+    return list(set(obsolete + [(root / raw).resolve(), (root / readable).resolve(), (root / 'sessions.csv').resolve()]))
+
+
+def commit_records(root, paths):
+    """Stage only this session's evidence and tracker; never push."""
+    repo = root.resolve().parent
+    git = ["git", "-C", str(repo), "-c", f"safe.directory={repo.as_posix()}"]
+    relative = [path.relative_to(repo).as_posix() for path in paths]
+    tracked = subprocess.check_output(git + ["ls-files", "-z", "--", *relative]).decode("utf-8").split("\0")
+    relative = [path for path in relative if (repo / path).exists() or path in tracked]
+    subprocess.run(git + ["add", "-A", "--", *relative], check=True)
+    subprocess.run(git + ["diff", "--cached", "--check", "--", *relative], check=True)
+    # --only prevents unrelated pre-staged work from entering this closeout commit.
+    subprocess.run(git + ["commit", "--only", "-m", "Refresh saved final conversation record", "--", *relative], check=True)
+
+
+def wait_for_final(source, timeout):
+    """Wait for a new actual assistant final message; never synthesize one."""
+    start = len(source.read_bytes().splitlines())
+    print("Waiting for the next saved assistant final reply...", flush=True)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        data = source.read_bytes()
+        try:
+            records = read_codex(data)
+        except ValueError:
+            time.sleep(0.1)  # The live writer may be halfway through a JSON line.
+            continue
+        for number, record in records:
+            payload = record.get("payload", {})
+            if number > start and record.get("type") == "response_item" and payload.get("type") == "message" and payload.get("role") == "assistant" and (payload.get("phase") == "final" or payload.get("channel") == "final"):
+                return data
+        time.sleep(0.1)
+    raise ValueError("Timed out waiting for a saved final reply; existing records were not changed")
 
 
 def discover(directory, workspace):
@@ -146,7 +203,7 @@ def bundle(root, pdf):
     rows = rows_at(root)
     if not rows:
         raise ValueError("No registered exports to compile")
-    parts = ["# IE 535 AI usage record", "Generated from actual registered exports. Snapshots may overlap or be incomplete. Full original exports remain in raw/. No missing conversations reconstructed.", "# Session index", (root / "sessions.csv").read_text(encoding="utf-8")]
+    parts = ["# IE 535 AI usage record", "Generated from actual registered session exports. Check each capture cutoff and completeness status. Full original exports remain in raw/. No missing conversations reconstructed.", "# Session index", (root / "sessions.csv").read_text(encoding="utf-8")]
     decisions = root / "decisions.md"
     if decisions.exists():
         parts.append(decisions.read_text(encoding="utf-8"))
@@ -164,7 +221,7 @@ def bundle(root, pdf):
     (output / "ai_record.md").write_text(text, encoding="utf-8")
     if pdf:
         write_pdf(text, output / "ai_record.pdf")
-    print(f"Compiled {len(rows)} snapshots into {output}")
+    print(f"Compiled {len(rows)} sessions into {output}")
 
 
 def main():
@@ -177,6 +234,9 @@ def main():
     codex = commands.add_parser("codex", help="Snapshot one explicitly selected saved Codex JSONL")
     codex.add_argument("source", type=Path)
     codex.add_argument("--topic", required=True)
+    codex.add_argument("--wait-final", action="store_true", help="Wait for the next newly saved assistant final reply before exporting")
+    codex.add_argument("--timeout", type=float, default=180, help="Maximum wait in seconds (default: 180)")
+    codex.add_argument("--commit", action="store_true", help="With --wait-final, locally commit only the refreshed session evidence and tracker")
     add = commands.add_parser("add", help="Register a ChatGPT/Claude original plus a verbatim text reading copy")
     add.add_argument("tool", choices=["chatgpt", "claude"])
     add.add_argument("source", type=Path)
@@ -187,12 +247,15 @@ def main():
     combined = commands.add_parser("bundle")
     combined.add_argument("--pdf", action="store_true")
     args = parser.parse_args()
+    if args.command == "codex" and args.commit and not args.wait_final:
+        parser.error("--commit requires --wait-final")
     if args.command == "list":
         discover(args.sessions_dir, args.workspace)
     elif args.command == "bundle":
         bundle(args.root, args.pdf)
     else:
-        data = args.source.read_bytes()  # One byte snapshot, never modify the live session.
+        saved_final = args.command == "codex" and args.wait_final
+        data = wait_for_final(args.source, args.timeout) if saved_final else args.source.read_bytes()
         if args.command == "codex":
             session_id, model, text = codex_transcript(data)
             tool = "codex"
@@ -204,11 +267,13 @@ def main():
                 text = data.decode("utf-8-sig")
             else:
                 raise ValueError("Supply --transcript with the actual full UTF-8 conversation text; native exports are preserved without guessing their schema")
-        preserve(args.root, args.source, tool, session_id, model, args.topic, text, data)
+        paths = preserve(args.root, args.source, tool, session_id, model, args.topic, text, data, saved_final)
+        if args.command == "codex" and args.commit:
+            commit_records(args.root, paths)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, OSError, ImportError) as error:
+    except (ValueError, OSError, ImportError, subprocess.CalledProcessError) as error:
         sys.exit(str(error))

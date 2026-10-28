@@ -16,9 +16,9 @@
 
 At the end of every session, when completing authorized work:
 
-1. Update the AI documentation. Export or preserve the actual conversation available through the latest saved message, including project prompts, follow-ups and responses, and update `ai_record/sessions.csv`. Preserve original exports; never invent or reconstruct missing content.
+1. Update the AI documentation. Maintain one current raw export, one transcript and one tracker row per tool/session ID. Refresh the entire actual saved conversation, including prior turns, follow-ups and final replies, in place when that session continues. Replace superseded snapshots only after verifying the new Codex source extends the prior source; retain earlier revisions in Git. Never invent or reconstruct missing content.
 2. Record important recommendations, corrections and decisions actually discussed in `ai_record/decisions.md`, including reasons and observed verification. Leave decisions requiring the user's approval explicitly marked as pending.
-3. Check the captured ending against the source. If the final reply or other content has not yet been saved, record the exact capture cutoff and the gap in the tracker; do not label the export complete. At the next opportunity, refresh the prior session's saved ending before proceeding. Never fabricate a final reply in an export.
+3. Include the final reply by starting `records.py codex <actual-source> --topic <topic> --wait-final --commit` in a hidden background process before sending it (see ai_record/README.md). This waits for the next actual saved final reply, refreshes that session's files and tracker, and commits only its evidence. Verify the process starts; do not claim its future capture succeeded before it runs. If capture times out or fails, record the gap and refresh the saved ending at the next opportunity. Do not label unsaved or missing content complete, concatenate overlapping snapshots, or fabricate a final reply.
 4. Verify the completed changes, then commit them and the updated AI records to local Git. Do not push without authorization.
 5. Give a short final summary of what was accomplished, any concerns or pending approvals, and the recommended next step. State any remaining export gap honestly.
 
