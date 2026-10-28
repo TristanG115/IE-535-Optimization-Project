@@ -153,7 +153,7 @@ Record only consequential suggestions actually discussed. `proposed` is not user
 
 - Date/session: 2026-10-28, Claude Code session `1be70a1c-9624-43ca-8083-418f0621d4b9`.
 - User decision (explicit): approved all Phase 1 changes and proposals (D014-D016, including the largest-index unit-column tie rule and the interior-may-reject/simplex-may-not-raise convention), and asked to log them, commit and push. This lifts the pre-commit review hold for this Phase 1 work. No reason beyond approval was given.
-- Outcome: see verification.md for the commit and push result. Solver implementation is still not authorized; it needs a separate go-ahead.
+- Outcome: committed locally as d76e31f; the user then added remote origin and pushed it. Claude verified after `git fetch` that HEAD and origin/main are both d76e31f (see verification.md). Solver implementation is still not authorized; it needs a separate go-ahead.
 - Verification: same test run as D016 repeated before committing.
 
 ## Template for future entries (not an actual decision)
